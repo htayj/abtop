@@ -26,6 +26,7 @@ impl Default for PanelVisibility {
     }
 }
 
+/// Parsed data for one user-defined `[themes.<name>]` config section.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomThemeConfig {
     pub name: String,
@@ -44,9 +45,6 @@ pub struct AppConfig {
     /// UI language override. Empty string means auto-detect from `LANG`.
     /// Recognized values: "en", "zh" (anything starting with "zh" maps to Simplified Chinese).
     pub language: String,
-    /// User-defined theme sections from `[themes.<name>]`. Values remain raw
-    /// so the theme module can validate color-specific syntax.
-    pub custom_themes: Vec<CustomThemeConfig>,
 }
 
 impl Default for AppConfig {
@@ -57,9 +55,40 @@ impl Default for AppConfig {
             claude_config_dirs: Vec::new(),
             panels: PanelVisibility::default(),
             language: String::new(),
-            custom_themes: Vec::new(),
         }
     }
+}
+
+#[derive(Default)]
+pub(crate) struct LoadedConfig {
+    pub(crate) config: AppConfig,
+    pub(crate) custom_themes: Vec<CustomThemeConfig>,
+}
+
+const MAX_CUSTOM_THEME_NAME_LEN: usize = 64;
+
+#[derive(Debug, PartialEq, Eq)]
+enum ConfigTable {
+    Root,
+    CustomTheme(String),
+    Unsupported,
+}
+
+/// Custom theme names are intentionally conservative: ASCII alphanumeric
+/// first character, followed by ASCII alphanumeric, underscore, or hyphen.
+/// This keeps names safe for TOML table suffixes and command-line use.
+pub fn is_valid_custom_theme_name(name: &str) -> bool {
+    if name.len() > MAX_CUSTOM_THEME_NAME_LEN {
+        return false;
+    }
+
+    let mut bytes = name.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+
+    first.is_ascii_alphanumeric()
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -67,22 +96,26 @@ fn config_path() -> Option<PathBuf> {
 }
 
 pub fn load_config() -> AppConfig {
+    load_config_with_custom_themes().config
+}
+
+pub(crate) fn load_config_with_custom_themes() -> LoadedConfig {
     let path = match config_path() {
         Some(p) => p,
-        None => return AppConfig::default(),
+        None => return LoadedConfig::default(),
     };
 
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
-        Err(_) => return AppConfig::default(),
+        Err(_) => return LoadedConfig::default(),
     };
 
     parse_config_body(&content)
 }
 
-fn parse_config_body(content: &str) -> AppConfig {
-    let mut config = AppConfig::default();
-    let mut current_custom_theme: Option<String> = None;
+fn parse_config_body(content: &str) -> LoadedConfig {
+    let mut loaded = LoadedConfig::default();
+    let mut current_table = ConfigTable::Root;
 
     for raw_line in content.lines() {
         let line = raw_line.trim();
@@ -91,10 +124,7 @@ fn parse_config_body(content: &str) -> AppConfig {
         }
 
         if let Some(section) = parse_section_header(line) {
-            current_custom_theme = section
-                .strip_prefix("themes.")
-                .filter(|name| !name.trim().is_empty())
-                .map(|name| name.trim().to_string());
+            current_table = parse_config_table(section);
             continue;
         }
 
@@ -102,39 +132,52 @@ fn parse_config_body(content: &str) -> AppConfig {
             let key = key.trim();
             let val = strip_inline_comment(val.trim());
 
-            if let Some(name) = &current_custom_theme {
-                if !key.is_empty() {
-                    custom_theme_mut(&mut config.custom_themes, name)
-                        .values
-                        .insert(key.to_string(), val.to_string());
+            match &current_table {
+                ConfigTable::CustomTheme(name) => {
+                    if !key.is_empty() {
+                        custom_theme_mut(&mut loaded.custom_themes, name)
+                            .values
+                            .insert(key.to_string(), val.to_string());
+                    }
+                    continue;
                 }
-                continue;
+                ConfigTable::Unsupported => continue,
+                ConfigTable::Root => {}
             }
 
             if key == "hidden_agents" {
-                config.hidden_agents = parse_string_array(val);
+                loaded.config.hidden_agents = parse_string_array(val);
                 continue;
             }
             if key == "claude_config_dirs" {
-                config.claude_config_dirs = parse_path_array(val);
+                loaded.config.claude_config_dirs = parse_path_array(val);
                 continue;
             }
             let val = val.trim_matches('\"').trim_matches('\'');
             match key {
-                "theme" => config.theme = val.to_string(),
-                "language" => config.language = val.to_string(),
-                "show_context" => config.panels.context = parse_bool(val).unwrap_or(true),
-                "show_quota" => config.panels.quota = parse_bool(val).unwrap_or(true),
-                "show_tokens" => config.panels.tokens = parse_bool(val).unwrap_or(true),
-                "show_projects" => config.panels.projects = parse_bool(val).unwrap_or(true),
-                "show_ports" => config.panels.ports = parse_bool(val).unwrap_or(true),
-                "show_sessions" => config.panels.sessions = parse_bool(val).unwrap_or(true),
-                "show_mcp" => config.panels.mcp = parse_bool(val).unwrap_or(true),
+                "theme" => loaded.config.theme = val.to_string(),
+                "language" => loaded.config.language = val.to_string(),
+                "show_context" => loaded.config.panels.context = parse_bool(val).unwrap_or(true),
+                "show_quota" => loaded.config.panels.quota = parse_bool(val).unwrap_or(true),
+                "show_tokens" => loaded.config.panels.tokens = parse_bool(val).unwrap_or(true),
+                "show_projects" => loaded.config.panels.projects = parse_bool(val).unwrap_or(true),
+                "show_ports" => loaded.config.panels.ports = parse_bool(val).unwrap_or(true),
+                "show_sessions" => loaded.config.panels.sessions = parse_bool(val).unwrap_or(true),
+                "show_mcp" => loaded.config.panels.mcp = parse_bool(val).unwrap_or(true),
                 _ => {}
             }
         }
     }
-    config
+    loaded
+}
+
+fn parse_config_table(section: &str) -> ConfigTable {
+    match section.strip_prefix("themes.") {
+        Some(name) if is_valid_custom_theme_name(name) => {
+            ConfigTable::CustomTheme(name.to_string())
+        }
+        _ => ConfigTable::Unsupported,
+    }
 }
 
 fn parse_section_header(line: &str) -> Option<&str> {
@@ -227,7 +270,36 @@ fn expand_home_path(raw: &str) -> PathBuf {
 }
 
 pub fn save_theme(name: &str) -> Result<(), String> {
-    write_with_updates(&[("theme", format!("\"{}\"", name))])
+    write_with_updates(&[("theme", theme_name_value(name)?)])
+}
+
+fn theme_name_value(name: &str) -> Result<String, String> {
+    if !is_valid_custom_theme_name(name) {
+        return Err(format!(
+            "invalid theme name '{}': use 1-64 ASCII letters, digits, underscores, or hyphens; start with a letter or digit",
+            name
+        ));
+    }
+
+    Ok(toml_basic_string(name))
+}
+
+fn toml_basic_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 pub fn save_panel_visibility(panels: &PanelVisibility) -> Result<(), String> {
@@ -351,16 +423,29 @@ mod tests {
     }
 
     #[test]
+    fn app_config_struct_literal_fields_remain_source_compatible() {
+        let cfg = AppConfig {
+            theme: "btop".to_string(),
+            hidden_agents: Vec::new(),
+            claude_config_dirs: Vec::new(),
+            panels: PanelVisibility::default(),
+            language: String::new(),
+        };
+
+        assert_eq!(cfg.theme, "btop");
+    }
+
+    #[test]
     fn parse_config_body_loads_claude_config_dirs() {
         let home = dirs::home_dir().unwrap();
-        let cfg = parse_config_body(r#"claude_config_dirs = ["~/.claude-personal"]"#);
+        let cfg = parse_config_body(r#"claude_config_dirs = ["~/.claude-personal"]"#).config;
 
         assert_eq!(cfg.claude_config_dirs, vec![home.join(".claude-personal")]);
     }
 
     #[test]
     fn parse_config_body_loads_custom_theme_sections() {
-        let cfg = parse_config_body(
+        let loaded = parse_config_body(
             r##"
 theme = "midnight" # active custom theme
 [themes.midnight]
@@ -370,22 +455,123 @@ cpu_grad = ["#000000", "#111111", "#ffffff"]
 "##,
         );
 
-        assert_eq!(cfg.theme, "midnight");
-        assert_eq!(cfg.custom_themes.len(), 1);
-        assert_eq!(cfg.custom_themes[0].name, "midnight");
+        assert_eq!(loaded.config.theme, "midnight");
+        assert_eq!(loaded.custom_themes.len(), 1);
+        assert_eq!(loaded.custom_themes[0].name, "midnight");
         assert_eq!(
-            cfg.custom_themes[0]
+            loaded.custom_themes[0]
                 .values
                 .get("main_bg")
                 .map(String::as_str),
             Some("\"#101010\"")
         );
         assert_eq!(
-            cfg.custom_themes[0]
+            loaded.custom_themes[0]
                 .values
                 .get("cpu_grad")
                 .map(String::as_str),
             Some("[\"#000000\", \"#111111\", \"#ffffff\"]")
+        );
+    }
+
+    #[test]
+    fn parse_config_body_ignores_root_keys_inside_unsupported_sections() {
+        let cfg = parse_config_body(
+            r#"
+theme = "dracula"
+hidden_agents = ["claude"]
+language = "en"
+show_context = false
+
+[metadata]
+theme = "nord"
+hidden_agents = ["codex"]
+language = "zh"
+show_context = true
+
+[other]
+show_quota = false
+show_tokens = false
+"#,
+        )
+        .config;
+
+        assert_eq!(cfg.theme, "dracula");
+        assert_eq!(cfg.hidden_agents, vec!["claude"]);
+        assert_eq!(cfg.language, "en");
+        assert!(!cfg.panels.context);
+        assert!(cfg.panels.quota);
+        assert!(cfg.panels.tokens);
+    }
+
+    #[test]
+    fn parse_config_body_parses_custom_themes_after_unsupported_sections() {
+        let loaded = parse_config_body(
+            r##"
+[metadata]
+theme = "nord"
+main_bg = "#badbad"
+
+[themes.midnight]
+base = "dracula"
+main_bg = "#101010"
+
+[metadata.more]
+title = "#ffffff"
+
+[themes.dawn]
+main_fg = "#eeeeee"
+"##,
+        );
+
+        assert_eq!(loaded.config.theme, "btop");
+        assert_eq!(loaded.custom_themes.len(), 2);
+        assert_eq!(loaded.custom_themes[0].name, "midnight");
+        assert_eq!(
+            loaded.custom_themes[0]
+                .values
+                .get("main_bg")
+                .map(String::as_str),
+            Some("\"#101010\"")
+        );
+        assert_eq!(loaded.custom_themes[1].name, "dawn");
+        assert_eq!(
+            loaded.custom_themes[1]
+                .values
+                .get("main_fg")
+                .map(String::as_str),
+            Some("\"#eeeeee\"")
+        );
+    }
+
+    #[test]
+    fn parse_config_body_ignores_invalid_custom_theme_sections() {
+        let loaded = parse_config_body(
+            r##"
+[themes.bad name]
+theme = "nord"
+main_bg = "#101010"
+
+[themes.-bad]
+main_bg = "#202020"
+
+[themes. spaced]
+main_bg = "#202020"
+
+[themes.valid_name-1]
+main_bg = "#303030"
+"##,
+        );
+
+        assert_eq!(loaded.config.theme, "btop");
+        assert_eq!(loaded.custom_themes.len(), 1);
+        assert_eq!(loaded.custom_themes[0].name, "valid_name-1");
+        assert_eq!(
+            loaded.custom_themes[0]
+                .values
+                .get("main_bg")
+                .map(String::as_str),
+            Some("\"#303030\"")
         );
     }
 
@@ -398,8 +584,45 @@ cpu_grad = ["#000000", "#111111", "#ffffff"]
         assert_eq!(strip_inline_comment("true # comment"), "true");
     }
 
+    #[test]
+    fn custom_theme_name_validation_accepts_documented_grammar() {
+        for name in ["midnight", "cga-lab", "CGA_LAB", "theme-1"] {
+            assert!(is_valid_custom_theme_name(name), "{name} should be valid");
+        }
+
+        let max_len_name = format!("a{}", "b".repeat(63));
+        assert_eq!(max_len_name.len(), 64);
+        assert!(is_valid_custom_theme_name(&max_len_name));
+
+        let too_long_name = format!("a{}", "b".repeat(64));
+        assert_eq!(too_long_name.len(), 65);
+        assert!(!is_valid_custom_theme_name(&too_long_name));
+
+        for name in ["", "-bad", "_bad", "bad name", "bad.name", "naïve"] {
+            assert!(
+                !is_valid_custom_theme_name(name),
+                "{name} should be invalid"
+            );
+        }
+    }
+
+    #[test]
+    fn theme_name_value_rejects_invalid_names_before_persistence() {
+        assert_eq!(theme_name_value("midnight").unwrap(), "\"midnight\"");
+        assert!(theme_name_value("bad name").is_err());
+        assert!(theme_name_value("bad\"name").is_err());
+    }
+
+    #[test]
+    fn toml_basic_string_escapes_special_characters() {
+        assert_eq!(
+            toml_basic_string("quote\" slash\\ newline\n"),
+            "\"quote\\\" slash\\\\ newline\\n\""
+        );
+    }
+
     fn theme_update(name: &str) -> Vec<(&'static str, String)> {
-        vec![("theme", format!("\"{}\"", name))]
+        vec![("theme", theme_name_value(name).unwrap())]
     }
 
     #[test]

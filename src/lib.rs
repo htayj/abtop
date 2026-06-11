@@ -106,8 +106,10 @@ pub fn run() -> io::Result<()> {
     }
 
     // Load config once; it drives the default theme, user themes, and hidden-agent list.
-    let cfg = config::load_config();
-    let available_theme_names = theme::available_theme_names(&cfg.custom_themes);
+    let loaded_config = config::load_config_with_custom_themes();
+    let cfg = loaded_config.config;
+    let custom_themes = loaded_config.custom_themes;
+    let available_theme_names = theme::available_theme_names(&custom_themes);
     let available_theme_list = available_theme_names.join(", ");
 
     // --theme flag > config file > default
@@ -130,7 +132,7 @@ pub fn run() -> io::Result<()> {
             }
         })
         .map(|name| {
-            theme::Theme::from_config_name(&name, &cfg.custom_themes).unwrap_or_else(|| {
+            theme::Theme::from_config_name(&name, &custom_themes).unwrap_or_else(|| {
                 eprintln!(
                     "unknown theme '{}'. available: {}",
                     name, available_theme_list
@@ -138,7 +140,7 @@ pub fn run() -> io::Result<()> {
                 std::process::exit(1);
             })
         })
-        .or_else(|| theme::Theme::from_config_name(&cfg.theme, &cfg.custom_themes));
+        .or_else(|| theme::Theme::from_config_name(&cfg.theme, &custom_themes));
 
     let demo_mode = std::env::args().any(|a| a == "--demo");
     let exit_on_jump = std::env::args().any(|a| a == "--exit-on-jump");

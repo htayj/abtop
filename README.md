@@ -51,7 +51,7 @@ abtop                    # Launch TUI
 abtop --once             # Print snapshot and exit
 abtop --json             # Print one JSON snapshot and exit (for scripts/tools)
 abtop --setup            # Install rate limit collection hook
-abtop --theme dracula    # Launch with a specific theme
+abtop --theme dracula    # Launch once with a specific theme (does not edit config)
 ```
 
 Recommended terminal size: **120x40** or larger. Minimum 80x24 — panels hide gracefully when small.
@@ -87,7 +87,7 @@ OpenCode support reads the local SQLite database at `~/.local/share/opencode/ope
 
 ## Themes
 
-12 built-in themes, including 4 colorblind-friendly options (`high-contrast`, `protanopia`, `deuteranopia`, `tritanopia`). Press `t` to cycle built-in and configured custom themes at runtime, or launch with `--theme <name>`. Your choice is saved to `~/.config/abtop/config.toml`.
+12 built-in themes, including 4 colorblind-friendly options (`high-contrast`, `protanopia`, `deuteranopia`, `tritanopia`). Press `t` to cycle built-in and configured custom themes at runtime; cycling writes the selected theme to your config file. `--theme <name>` is a one-run launch override and does not edit the config by itself.
 
 | btop (default) | dracula | catppuccin |
 |:-:|:-:|:-:|
@@ -115,7 +115,15 @@ Light themes (`light` — Solarized cream, `white` — GitHub-style pure white) 
 
 ## Configuration
 
-`~/.config/abtop/config.toml` supports:
+abtop reads one config file from the platform config directory. There is no `--config` flag, and abtop does not read `./config.toml` from the current directory.
+
+| Platform | Config path |
+| -------- | ----------- |
+| Linux / XDG | `$XDG_CONFIG_HOME/abtop/config.toml`, or `~/.config/abtop/config.toml` when `XDG_CONFIG_HOME` is unset |
+| macOS | `~/Library/Application Support/abtop/config.toml` |
+| Windows | `%APPDATA%\abtop\config.toml` |
+
+The config file supports:
 
 ```toml
 theme = "btop"
@@ -132,7 +140,7 @@ language = "zh"
 
 ### Custom themes
 
-Define custom themes in the same config file with `[themes.<name>]`, then set `theme = "<name>"` or launch `abtop --theme <name>`. Custom themes are appended to the `t` cycle after built-ins. Names matching built-ins do not override built-ins. Malformed color/gradient values are ignored and inherit from the base theme; config values are parsed as data only, with no code execution.
+Define custom themes in the same config file with `[themes.<name>]`, then set `theme = "<name>"` or launch `abtop --theme <name>`. Custom theme names must match `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`; invalid custom theme sections are ignored fail-soft. Custom themes are appended to the `t` cycle after built-ins, and built-in names always win over same-named custom themes. Unknown `theme = "..."` values in config fall back to `btop`; unknown `--theme <name>` values exit with an error. Unknown custom `base` values fall back to `btop`. Malformed color/gradient values are ignored and inherit from the base theme; config values are parsed as data only, with no code execution.
 
 Exact schema:
 
@@ -190,9 +198,10 @@ When `language` is unset, abtop auto-detects from `LANG` — any value starting 
 | `Enter`            | Jump to session terminal (tmux only) |
 | `x`                | Kill selected session                |
 | `X`                | Kill all orphan ports                |
-| `t`                | Cycle theme                          |
-| `1`–`5`            | Toggle panel visibility              |
-| `Esc`              | Open/close config page               |
+| `t`                | Cycle theme and save the selection   |
+| `1`–`7`            | Toggle panel visibility              |
+| `c`                | Open/close config page               |
+| `Esc`              | Close overlays or clear filter text  |
 | `q`                | Quit                                 |
 | `r`                | Force refresh                        |
 

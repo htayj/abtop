@@ -1,5 +1,7 @@
-use crate::config::CustomThemeConfig;
+use crate::config::{is_valid_custom_theme_name, CustomThemeConfig};
 use ratatui::style::Color;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Gradient {
@@ -9,7 +11,7 @@ pub struct Gradient {
 }
 
 pub struct Theme {
-    pub name: String,
+    pub name: &'static str,
 
     // base
     pub main_bg: Color,
@@ -65,6 +67,7 @@ pub const THEME_NAMES: &[&str] = &[
 ];
 
 impl Theme {
+    /// Load a built-in theme by its exact preset name.
     pub fn by_name(name: &str) -> Option<Self> {
         match name {
             "btop" => Some(Self::btop()),
@@ -83,13 +86,19 @@ impl Theme {
         }
     }
 
+    /// Load a built-in theme or a validated custom theme parsed from config.
+    /// Built-in names take precedence over same-named custom themes.
     pub fn from_config_name(name: &str, custom_themes: &[CustomThemeConfig]) -> Option<Self> {
         Self::by_name(name).or_else(|| custom_theme_by_name(name, custom_themes))
     }
 
+    /// Return built-in preset names followed by valid, non-duplicate custom names.
     pub fn available_names(custom_themes: &[CustomThemeConfig]) -> Vec<String> {
         let mut names: Vec<String> = THEME_NAMES.iter().map(|name| (*name).to_string()).collect();
         for custom in custom_themes {
+            if !is_valid_custom_theme_name(&custom.name) {
+                continue;
+            }
             if !names.iter().any(|name| name == &custom.name) {
                 names.push(custom.name.clone());
             }
@@ -100,7 +109,7 @@ impl Theme {
     /// btop default — exact RGB values from btop_theme.cpp Default_theme
     pub fn btop() -> Self {
         Self {
-            name: "btop".to_string(),
+            name: "btop",
             main_bg: Color::Rgb(25, 25, 25),
             main_fg: Color::Rgb(204, 204, 204),
             title: Color::Rgb(238, 238, 238),
@@ -149,7 +158,7 @@ impl Theme {
 
     pub fn dracula() -> Self {
         Self {
-            name: "dracula".to_string(),
+            name: "dracula",
             main_bg: Color::Rgb(40, 42, 54),
             main_fg: Color::Rgb(248, 248, 242),
             title: Color::Rgb(248, 248, 242),
@@ -199,7 +208,7 @@ impl Theme {
     pub fn catppuccin() -> Self {
         // Catppuccin Mocha palette
         Self {
-            name: "catppuccin".to_string(),
+            name: "catppuccin",
             main_bg: Color::Rgb(30, 30, 46),
             main_fg: Color::Rgb(205, 214, 244),
             title: Color::Rgb(205, 214, 244),
@@ -249,7 +258,7 @@ impl Theme {
     pub fn tokyo_night() -> Self {
         // Tokyo Night — night variant
         Self {
-            name: "tokyo-night".to_string(),
+            name: "tokyo-night",
             main_bg: Color::Rgb(26, 27, 38),        // bg #1a1b26
             main_fg: Color::Rgb(169, 177, 214),     // fg_dark #a9b1d6
             title: Color::Rgb(192, 202, 245),       // fg #c0caf5
@@ -299,7 +308,7 @@ impl Theme {
     pub fn gruvbox() -> Self {
         // gruvbox dark — bright accent variants for TUI visibility
         Self {
-            name: "gruvbox".to_string(),
+            name: "gruvbox",
             main_bg: Color::Rgb(40, 40, 40),        // bg0 #282828
             main_fg: Color::Rgb(235, 219, 178),     // fg1 #ebdbb2
             title: Color::Rgb(251, 241, 199),       // fg0 #fbf1c7
@@ -349,7 +358,7 @@ impl Theme {
     pub fn nord() -> Self {
         // Nord — arctic color palette
         Self {
-            name: "nord".to_string(),
+            name: "nord",
             main_bg: Color::Rgb(46, 52, 64),        // nord0 #2e3440
             main_fg: Color::Rgb(216, 222, 233),     // nord4 #d8dee9
             title: Color::Rgb(236, 239, 244),       // nord6 #eceff4
@@ -400,7 +409,7 @@ impl Theme {
     /// muted accents for users on bright terminals.
     pub fn light() -> Self {
         Self {
-            name: "light".to_string(),
+            name: "light",
             main_bg: Color::Rgb(253, 246, 227), // base3 #fdf6e3
             main_fg: Color::Rgb(88, 110, 117),  // base01 #586e75
             title: Color::Rgb(7, 54, 66),       // base02 #073642
@@ -451,7 +460,7 @@ impl Theme {
     /// crisp accent colors for users on bright terminals.
     pub fn white() -> Self {
         Self {
-            name: "white".to_string(),
+            name: "white",
             main_bg: Color::Rgb(255, 255, 255),     // white
             main_fg: Color::Rgb(31, 35, 40),        // gh fg.default #1f2328
             title: Color::Rgb(0, 0, 0),             // black
@@ -503,7 +512,7 @@ impl Theme {
     /// any color vision deficiency).
     pub fn high_contrast() -> Self {
         Self {
-            name: "high-contrast".to_string(),
+            name: "high-contrast",
             main_bg: Color::Rgb(0, 0, 0),
             main_fg: Color::Rgb(255, 255, 255),
             title: Color::Rgb(255, 255, 255),
@@ -555,7 +564,7 @@ impl Theme {
     /// magenta #DC267F, orange #FE6100, yellow #FFB000.
     pub fn protanopia() -> Self {
         Self {
-            name: "protanopia".to_string(),
+            name: "protanopia",
             main_bg: Color::Rgb(20, 20, 32),
             main_fg: Color::Rgb(220, 220, 220),
             title: Color::Rgb(255, 255, 255),
@@ -607,7 +616,7 @@ impl Theme {
     /// distinguish most reliably.
     pub fn deuteranopia() -> Self {
         Self {
-            name: "deuteranopia".to_string(),
+            name: "deuteranopia",
             main_bg: Color::Rgb(18, 24, 40),
             main_fg: Color::Rgb(222, 222, 230),
             title: Color::Rgb(255, 255, 255),
@@ -658,7 +667,7 @@ impl Theme {
     /// confusion. Inspired by GitHub's tritanopia-friendly colors.
     pub fn tritanopia() -> Self {
         Self {
-            name: "tritanopia".to_string(),
+            name: "tritanopia",
             main_bg: Color::Rgb(24, 20, 22),
             main_fg: Color::Rgb(224, 224, 224),
             title: Color::Rgb(255, 255, 255),
@@ -706,11 +715,38 @@ impl Theme {
     }
 }
 
+/// Return theme names available to CLI errors and the runtime theme cycle.
 pub fn available_theme_names(custom_themes: &[CustomThemeConfig]) -> Vec<String> {
     Theme::available_names(custom_themes)
 }
 
+fn static_theme_name(name: &str) -> &'static str {
+    // Theme::name is a public &'static str for source compatibility. Custom
+    // names are validated and capped at 64 bytes before interning, so this
+    // leaks at most one short string per distinct valid custom name per process.
+    if let Some(preset) = THEME_NAMES.iter().copied().find(|preset| *preset == name) {
+        return preset;
+    }
+
+    static CUSTOM_THEME_NAMES: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
+    let names = CUSTOM_THEME_NAMES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut names = names
+        .lock()
+        .expect("custom theme name interner mutex poisoned");
+    if let Some(&name) = names.get(name) {
+        return name;
+    }
+
+    let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
+    names.insert(leaked.to_string(), leaked);
+    leaked
+}
+
 fn custom_theme_by_name(name: &str, custom_themes: &[CustomThemeConfig]) -> Option<Theme> {
+    if !is_valid_custom_theme_name(name) {
+        return None;
+    }
+
     let custom = custom_themes.iter().find(|theme| theme.name == name)?;
     let base_name = custom
         .values
@@ -718,7 +754,7 @@ fn custom_theme_by_name(name: &str, custom_themes: &[CustomThemeConfig]) -> Opti
         .map(|raw| unquote(raw))
         .unwrap_or("btop");
     let mut theme = Theme::by_name(base_name).unwrap_or_default();
-    theme.name = custom.name.clone();
+    theme.name = static_theme_name(&custom.name);
 
     for (key, raw) in &custom.values {
         match key.as_str() {
@@ -889,10 +925,15 @@ mod tests {
                 .collect(),
         };
 
-        let theme = Theme::from_config_name("btop", &[custom]).unwrap();
+        let theme = Theme::from_config_name("btop", std::slice::from_ref(&custom)).unwrap();
+        let names = available_theme_names(std::slice::from_ref(&custom));
 
         assert_eq!(theme.name, "btop");
         assert_eq!(theme.main_bg, Theme::btop().main_bg);
+        assert_eq!(
+            names.iter().filter(|name| name.as_str() == "btop").count(),
+            1
+        );
     }
 
     #[test]
@@ -906,5 +947,33 @@ mod tests {
 
         assert_eq!(names.first().map(String::as_str), Some("btop"));
         assert!(names.iter().any(|name| name == "midnight"));
+    }
+
+    #[test]
+    fn invalid_custom_theme_names_are_not_available_or_loaded() {
+        let invalid = CustomThemeConfig {
+            name: "bad name".to_string(),
+            values: Default::default(),
+        };
+
+        assert!(Theme::from_config_name("bad name", std::slice::from_ref(&invalid)).is_none());
+
+        let names = available_theme_names(std::slice::from_ref(&invalid));
+        assert!(!names.iter().any(|name| name == "bad name"));
+    }
+
+    #[test]
+    fn theme_name_public_field_remains_static_str() {
+        fn accepts_static(_: &'static str) {}
+
+        accepts_static(Theme::default().name);
+
+        let custom = CustomThemeConfig {
+            name: "midnight".to_string(),
+            values: Default::default(),
+        };
+        let theme = Theme::from_config_name("midnight", &[custom]).unwrap();
+        accepts_static(theme.name);
+        assert_eq!(theme.name, "midnight");
     }
 }
