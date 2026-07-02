@@ -35,6 +35,8 @@ static LOCALE_EN: LazyLock<std::collections::HashMap<&str, &str>> = LazyLock::ne
     m.insert("col.sess", "Sess");
     m.insert("col.summary", "Summary");
     m.insert("col.status", "Status");
+    m.insert("col.autokill", "Autokill");
+    m.insert("col.auto", "Auto");
     m.insert("col.model", "Model");
     m.insert("col.context", "Context");
     m.insert("col.ctx", "Ctx");
@@ -118,6 +120,7 @@ static LOCALE_EN: LazyLock<std::collections::HashMap<&str, &str>> = LazyLock::ne
     m.insert("help.clear_filter", "clear filter / close overlay");
     m.insert("help.kill_session", "kill selected session");
     m.insert("help.kill_orphans", "kill orphan ports");
+    m.insert("help.toggle_autokill", "toggle selected Claude autokill");
     m.insert("help.refresh", "force refresh");
     m.insert("help.quit", "quit");
     m.insert("help.view_menu", "open view menu");
@@ -138,6 +141,7 @@ static LOCALE_EN: LazyLock<std::collections::HashMap<&str, &str>> = LazyLock::ne
     // Footer
     m.insert("footer.select", "select");
     m.insert("footer.kill", "kill");
+    m.insert("footer.autokill", "autokill");
     m.insert("footer.filter", "filter");
     m.insert("footer.view", "view");
     m.insert("footer.config", "config");
@@ -283,6 +287,8 @@ static LOCALE_ZH: LazyLock<std::collections::HashMap<&str, &str>> = LazyLock::ne
     m.insert("col.sess", "会");
     m.insert("col.summary", "摘要");
     m.insert("col.status", "状态");
+    m.insert("col.autokill", "Autokill");
+    m.insert("col.auto", "Auto");
     m.insert("col.model", "模型");
     m.insert("col.context", "上下文");
     m.insert("col.ctx", "上");
@@ -366,6 +372,7 @@ static LOCALE_ZH: LazyLock<std::collections::HashMap<&str, &str>> = LazyLock::ne
     m.insert("help.clear_filter", "清除过滤 / 关闭覆盖");
     m.insert("help.kill_session", "终止选中的会话");
     m.insert("help.kill_orphans", "终止孤立端口");
+    m.insert("help.toggle_autokill", "toggle selected Claude autokill");
     m.insert("help.refresh", "强制刷新");
     m.insert("help.quit", "退出");
     m.insert("help.view_menu", "打开视图菜单");
@@ -383,6 +390,7 @@ static LOCALE_ZH: LazyLock<std::collections::HashMap<&str, &str>> = LazyLock::ne
     // Footer
     m.insert("footer.select", "选择");
     m.insert("footer.kill", "终止");
+    m.insert("footer.autokill", "autokill");
     m.insert("footer.filter", "过滤");
     m.insert("footer.view", "视图");
     m.insert("footer.config", "配置");

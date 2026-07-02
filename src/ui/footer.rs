@@ -53,14 +53,51 @@ pub(crate) fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     let has_tmux = std::env::var("TMUX").is_ok();
     let compact = area.width <= 80;
     let ultra_compact = area.width <= 70;
+    let status_msg = app
+        .status_msg
+        .as_ref()
+        .filter(|(_, when)| when.elapsed().as_secs() < 3)
+        .map(|(msg, _)| {
+            let style = if msg.contains("interrupted")
+                || msg.contains("continue")
+                || msg.contains("failed")
+                || msg.contains("skipped")
+            {
+                Style::default().fg(theme.warning_fg)
+            } else {
+                Style::default().fg(theme.status_fg)
+            };
+            (msg.clone(), style)
+        })
+        .or_else(|| {
+            app.scheduler_status()
+                .map(|msg| (msg, Style::default().fg(theme.warning_fg)))
+        });
 
-    let mut spans = vec![
+    if compact {
+        if let Some((msg, style)) = status_msg.as_ref() {
+            f.render_widget(
+                Paragraph::new(Line::from(vec![Span::styled(
+                    truncate_str(msg, area.width as usize),
+                    *style,
+                )])),
+                area,
+            );
+            return;
+        }
+    }
+
+    let mut spans = Vec::new();
+    if let Some((msg, style)) = status_msg.as_ref() {
+        spans.push(Span::styled(format!(" {} ", msg), *style));
+    }
+    spans.extend([
         Span::styled(" ↑↓", Style::default().fg(theme.hi_fg)),
         Span::styled(
             format!(" {} ", t("footer.select")),
             Style::default().fg(theme.main_fg),
         ),
-    ];
+    ]);
     if has_tmux && !ultra_compact {
         spans.push(Span::styled("↵", Style::default().fg(theme.hi_fg)));
         spans.push(Span::styled(
@@ -76,6 +113,11 @@ pub(crate) fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         spans.push(Span::styled("x", Style::default().fg(theme.hi_fg)));
         spans.push(Span::styled(
             format!(" {} ", t("footer.kill")),
+            Style::default().fg(theme.main_fg),
+        ));
+        spans.push(Span::styled("a", Style::default().fg(theme.hi_fg)));
+        spans.push(Span::styled(
+            format!(" {} ", t("footer.autokill")),
             Style::default().fg(theme.main_fg),
         ));
     }
@@ -109,29 +151,17 @@ pub(crate) fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         Style::default().fg(theme.main_fg),
     ));
 
-    // Show active filter or transient status
+    // Show active filter or idle auto marker after higher-priority status.
     if !compact && !app.filter_text.is_empty() {
         spans.push(Span::styled(
             format!(" /{} ", app.filter_text),
             Style::default().fg(theme.status_fg),
         ));
-    } else if !compact {
-        let status_text = app
-            .status_msg
-            .as_ref()
-            .filter(|(_, when)| when.elapsed().as_secs() < 3)
-            .map(|(msg, _)| msg.as_str());
-        if let Some(msg) = status_text {
-            spans.push(Span::styled(
-                format!(" {msg} "),
-                Style::default().fg(theme.status_fg),
-            ));
-        } else {
-            spans.push(Span::styled(
-                t("footer.auto"),
-                Style::default().fg(theme.inactive_fg),
-            ));
-        }
+    } else if !compact && status_msg.is_none() {
+        spans.push(Span::styled(
+            t("footer.auto"),
+            Style::default().fg(theme.inactive_fg),
+        ));
     }
 
     // Peak hours warning: US business hours = PT 5am–11am = UTC 12:00–18:00

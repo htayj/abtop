@@ -1,11 +1,15 @@
 use crate::collector::{read_rate_limits, McpServer, MultiCollector};
 use crate::host_info::{AgentAggregate, HostMetrics, HostSampler};
 use crate::model::{AgentSession, OrphanPort, RateLimitInfo, SessionStatus};
+use crate::scheduler::{
+    scheduler_session_key, ClaudeScheduler, SchedulerSession, SchedulerTickReport,
+    TmuxSchedulerExecutor,
+};
 use crate::theme::Theme;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Maximum data points kept for the live token-rate graph.
 const GRAPH_HISTORY_LEN: usize = 200;
@@ -112,6 +116,12 @@ pub struct App {
     pub status_msg: Option<(String, Instant)>,
     /// Kill confirmation: (selected_index, timestamp). Expires after 2s.
     kill_confirm: Option<(usize, Instant)>,
+    /// Session keys with Claude Code scheduler autokill disabled. Claude sessions
+    /// default to enabled unless present here; non-Claude sessions are never
+    /// autokilled by the scheduler.
+    autokill_disabled: HashSet<String>,
+    /// Interactive TUI-only Claude Code 5h limit scheduler.
+    scheduler: ClaudeScheduler,
     pub theme: Theme,
     pub show_context: bool,
     pub show_quota: bool,
@@ -188,6 +198,8 @@ impl App {
             orphan_ports: Vec::new(),
             status_msg: None,
             kill_confirm: None,
+            autokill_disabled: HashSet::new(),
+            scheduler: ClaudeScheduler::default(),
             theme,
             show_context: panels.context,
             show_quota: panels.quota,
@@ -258,6 +270,37 @@ impl App {
             "off"
         };
         self.set_status(format!("mcp session suppression: {}", label));
+    }
+
+    pub fn autokill_enabled(&self, session: &AgentSession) -> bool {
+        session.agent_cli == "claude"
+            && !self.autokill_disabled.contains(&scheduler_session_key(
+                session.agent_cli,
+                &session.session_id,
+                session.pid,
+            ))
+    }
+
+    pub fn toggle_selected_autokill(&mut self) {
+        let Some(session) = self.sessions.get(self.selected) else {
+            return;
+        };
+        if session.agent_cli != "claude" {
+            self.set_status("autokill only applies to Claude Code sessions".to_string());
+            return;
+        }
+
+        let key = scheduler_session_key(session.agent_cli, &session.session_id, session.pid);
+        let project_name = session.project_name.clone();
+        let now_enabled = !self.autokill_disabled.contains(&key);
+        let label = if now_enabled {
+            self.autokill_disabled.insert(key);
+            "off"
+        } else {
+            self.autokill_disabled.remove(&key);
+            "on"
+        };
+        self.set_status(format!("autokill {} for this run: {}", label, project_name));
     }
 
     fn persist_panel_visibility(&mut self) {
@@ -492,12 +535,41 @@ impl App {
         self.status_msg = Some((msg, Instant::now()));
     }
 
-    /// Full refresh used by the TUI: collect monitored data, then generate and
-    /// retry session summaries. Equivalent to [`App::tick_no_summaries`] followed
-    /// by [`App::drain_and_retry_summaries`].
+    /// Full refresh used by non-scheduler callers: collect monitored data, then
+    /// generate and retry session summaries. Equivalent to
+    /// [`App::tick_no_summaries`] followed by [`App::drain_and_retry_summaries`].
     pub fn tick(&mut self) {
         self.tick_no_summaries();
         self.drain_and_retry_summaries();
+    }
+
+    /// Interactive TUI refresh. This is the only tick path that runs the Claude
+    /// Code scheduler; `--once`, `--json`, and library consumers keep using
+    /// `tick`/`tick_no_summaries` and never send tmux keys or kill processes.
+    pub fn tick_interactive(&mut self) {
+        self.tick();
+        self.run_scheduler();
+    }
+
+    fn run_scheduler(&mut self) {
+        let sessions = self
+            .sessions
+            .iter()
+            .map(|session| {
+                SchedulerSession::from_agent_session(session, self.autokill_enabled(session))
+            })
+            .collect::<Vec<_>>();
+        let mut executor = TmuxSchedulerExecutor;
+        let report = self
+            .scheduler
+            .tick(&sessions, &self.rate_limits, now_secs(), &mut executor);
+        if let Some(message) = scheduler_report_message(&report) {
+            self.set_status(message);
+        }
+    }
+
+    pub fn scheduler_status(&self) -> Option<String> {
+        self.scheduler.status(now_secs())
     }
 
     /// Refresh all monitored data WITHOUT spawning background summary jobs.
@@ -890,6 +962,32 @@ impl App {
     }
 }
 
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn scheduler_report_message(report: &SchedulerTickReport) -> Option<String> {
+    if let Some(error) = report.errors.first() {
+        return Some(error.clone());
+    }
+    if !report.interrupted.is_empty() {
+        return Some(format!(
+            "autokill interrupted {} Claude session(s)",
+            report.interrupted.len()
+        ));
+    }
+    if !report.resumed.is_empty() {
+        return Some(format!(
+            "sent continue to {} Claude session(s)",
+            report.resumed.len()
+        ));
+    }
+    None
+}
+
 /// Call `claude --print` via stdin pipe to summarize a prompt.
 /// Returns `None` on timeout so the caller can retry later.
 fn generate_summary(prompt: &str, assistant_text: &str) -> Option<String> {
@@ -1202,5 +1300,28 @@ mod tests {
         assert!(!is_killable_agent_command(
             "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
         ));
+    }
+
+    #[test]
+    fn autokill_defaults_true_for_claude_and_can_toggle_selected_session() {
+        let mut app = App::new_with_config(
+            Theme::default(),
+            &[],
+            crate::config::PanelVisibility::default(),
+        );
+        let mut claude = waiting_session("claude");
+        claude.session_id = "claude-1".to_string();
+        let mut codex = waiting_session("codex");
+        codex.session_id = "codex-1".to_string();
+        app.sessions = vec![claude, codex];
+
+        assert!(app.autokill_enabled(&app.sessions[0]));
+        assert!(!app.autokill_enabled(&app.sessions[1]));
+
+        app.selected = 0;
+        app.toggle_selected_autokill();
+        assert!(!app.autokill_enabled(&app.sessions[0]));
+        app.toggle_selected_autokill();
+        assert!(app.autokill_enabled(&app.sessions[0]));
     }
 }

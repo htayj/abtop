@@ -17,6 +17,7 @@ fn get_entries() -> Vec<(String, String)> {
         (t("help.actions"), String::new()),
         ("  x".to_string(), t("help.kill_session")),
         ("  X".to_string(), t("help.kill_orphans")),
+        ("  a".to_string(), t("help.toggle_autokill")),
         ("  r".to_string(), t("help.refresh")),
         ("  q".to_string(), t("help.quit")),
         (t("help.views"), String::new()),

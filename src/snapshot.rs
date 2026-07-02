@@ -98,6 +98,9 @@ pub struct SessionView {
     pub config_root: String,
     /// Coarse activity state; serializes as its variant name (e.g. `"Thinking"`).
     pub status: SessionStatus,
+    /// Whether the interactive TUI scheduler would stop this session at the
+    /// Claude 5h limit. Only Claude Code sessions can be true.
+    pub autokill_enabled: bool,
     /// Model identifier reported by the session (e.g. `"claude-opus-4-6"`).
     pub model: String,
     /// Reasoning effort (Codex only); empty when N/A.
@@ -208,6 +211,7 @@ impl App {
                 cwd: s.cwd.clone(),
                 config_root: s.config_root.clone(),
                 status: s.status.clone(),
+                autokill_enabled: self.autokill_enabled(s),
                 model: s.model.clone(),
                 effort: s.effort.clone(),
                 version: s.version.clone(),
@@ -358,6 +362,20 @@ mod tests {
         assert!(!snap.sessions.is_empty());
         assert!(snap.host.is_some(), "demo populates host metrics");
         assert!(!snap.rate_limits.is_empty(), "demo populates rate limits");
+
+        assert!(
+            snap.sessions
+                .iter()
+                .any(|s| s.agent_cli == "claude" && s.autokill_enabled),
+            "Claude sessions default to autokill enabled"
+        );
+        assert!(
+            snap.sessions
+                .iter()
+                .filter(|s| s.agent_cli != "claude")
+                .all(|s| !s.autokill_enabled),
+            "non-Claude sessions are never scheduler autokill targets"
+        );
 
         for s in &snap.sessions {
             // Bounded tails.

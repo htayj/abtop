@@ -21,6 +21,7 @@ src/
 ├── main.rs                 # Entry, terminal setup, event loop, --setup flag
 ├── app.rs                  # App state, tick logic, key handling, summary generation
 ├── setup.rs                # StatusLine hook installation (abtop --setup)
+├── scheduler.rs            # Interactive tmux Claude 5h autokill scheduler
 ├── ui/
 │   └── mod.rs              # All panels in single file: header, context, quota,
 │                           # tokens, projects, ports, sessions, footer
@@ -84,7 +85,7 @@ Panel descriptions:
 
 ## Data Sources
 
-All read-only from local filesystem + `ps` + `lsof`. No API calls, no auth.
+Collector inputs are read-only from local filesystem + `ps` + `lsof`. No API calls, no auth. The personal interactive scheduler can additionally kill Claude Code PIDs and send tmux keys for sessions with autokill enabled; after reset it may cause Claude Code to resume and make its normal API calls.
 
 ### 1. Claude Code session discovery: process + config-root mapping
 
@@ -277,6 +278,7 @@ Tracks child processes that have open ports. When a parent session dies but the 
 | `Enter` | Jump to session terminal (tmux only) |
 | `x` | Kill selected session (SIGKILL) |
 | `X` | Kill all orphan ports |
+| `a` | Toggle selected Claude Code autokill |
 | `q` | Quit |
 | `r` | Force refresh |
 
@@ -364,7 +366,8 @@ Session jump (`Enter`) only works when abtop runs inside tmux:
 abtop reads transcripts, prompts, tool inputs, and memory files. These may contain secrets.
 - **`--once` output**: redact file contents from tool_use inputs. Show tool name + file path only, not content.
 - **TUI mode**: show tool name + first arg (file path), never show file contents or prompt text in session list.
-- **No network**: abtop never sends data anywhere. All local reads.
+- **No network**: abtop never sends data anywhere. Collector data is read locally.
+- **Scheduler side effects**: in interactive TUI mode only, Claude autokill may SIGKILL verified Claude Code PIDs and send tmux keys (`reset`, `claude --resume <session-id>`, `continue`) for sessions with autokill enabled. The later `continue` may cause Claude Code to resume work and make its normal API calls/use quota after reset.
 - **Exception**: summary generation calls `claude --print` locally (no network by abtop itself, but claude may use its API).
 
 ## Gotchas

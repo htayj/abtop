@@ -89,6 +89,7 @@ pub(crate) fn draw_sessions_panel_active(
     let show_config = w >= 100;
     let show_model = w >= 90;
     let show_tokens = w >= 86;
+    let show_autokill = w >= 72;
     let show_memory = w >= 110;
     let show_turn = w >= 110;
 
@@ -126,6 +127,12 @@ pub(crate) fn draw_sessions_panel_active(
         t("col.ctx")
     };
     let tokens_w: u16 = if w >= 100 { 7 } else { 5 };
+    let autokill_w: u16 = if w >= 110 { 8 } else { 4 };
+    let autokill_label = if w >= 110 {
+        t("col.autokill")
+    } else {
+        t("col.auto")
+    };
 
     let visible = app.visible_indices();
     for &i in &visible {
@@ -134,9 +141,9 @@ pub(crate) fn draw_sessions_panel_active(
         let marker = if selected { "►" } else { " " };
 
         let (agent_label, agent_color) = match session.agent_cli {
-            "claude"   => ("*CC", Color::Rgb(217, 119, 87)),  // #D97757 terracotta
-            "codex"    => (">CD", Color::Rgb(122, 157, 255)), // #7A9DFF periwinkle
-            "opencode" => ("#OC", Color::Rgb(74, 222, 128)),  // #4ADE80 emerald
+            "claude" => ("*CC", Color::Rgb(217, 119, 87)), // #D97757 terracotta
+            "codex" => (">CD", Color::Rgb(122, 157, 255)), // #7A9DFF periwinkle
+            "opencode" => ("#OC", Color::Rgb(74, 222, 128)), // #4ADE80 emerald
             other => {
                 let fallback: String = other.chars().take(3).collect::<String>().to_uppercase();
                 (
@@ -215,6 +222,18 @@ pub(crate) fn draw_sessions_panel_active(
                 Style::default().fg(status_color),
             )),
         ]);
+        if show_autokill {
+            let (autokill, autokill_style) = if session.agent_cli == "claude" {
+                if app.autokill_enabled(session) {
+                    ("on", Style::default().fg(theme.proc_misc))
+                } else {
+                    ("off", Style::default().fg(theme.inactive_fg))
+                }
+            } else {
+                ("—", Style::default().fg(theme.inactive_fg))
+            };
+            cells.push(Cell::from(Span::styled(autokill, autokill_style)));
+        }
         if show_model {
             cells.push(Cell::from(Span::styled(
                 truncate_str(&model_short, model_w as usize),
@@ -255,12 +274,12 @@ pub(crate) fn draw_sessions_panel_active(
         rows.push(Row::new(cells).style(row_style).height(1));
 
         // 2nd line: task text in Summary column
-        let summary_idx =
-            3 + show_pid as usize + show_session_id as usize + show_config as usize;
+        let summary_idx = 3 + show_pid as usize + show_session_id as usize + show_config as usize;
         let total_cols = 6
             + show_pid as usize
             + show_session_id as usize
             + show_config as usize
+            + show_autokill as usize
             + show_model as usize
             + show_tokens as usize
             + show_memory as usize
@@ -320,6 +339,9 @@ pub(crate) fn draw_sessions_panel_active(
                     Cell::from(""),
                     Cell::from(Span::styled(icon, Style::default().fg(sa_fg))),
                 ]);
+                if show_autokill {
+                    sa_cells.push(Cell::from(""));
+                }
                 if show_model {
                     sa_cells.push(Cell::from(""));
                 }
@@ -362,6 +384,9 @@ pub(crate) fn draw_sessions_panel_active(
         Cell::from(Span::styled(t("col.summary"), header_style)),
         Cell::from(Span::styled(t("col.status"), header_style)),
     ]);
+    if show_autokill {
+        header_cells.push(Cell::from(Span::styled(autokill_label, header_style)));
+    }
     if show_model {
         header_cells.push(Cell::from(Span::styled(t("col.model"), header_style)));
     }
@@ -393,6 +418,9 @@ pub(crate) fn draw_sessions_panel_active(
     }
     widths_vec.push(Constraint::Fill(1)); // summary (fills remaining)
     widths_vec.push(Constraint::Length(status_w)); // status
+    if show_autokill {
+        widths_vec.push(Constraint::Length(autokill_w)); // autokill
+    }
     if show_model {
         widths_vec.push(Constraint::Length(model_w)); // model
     }
@@ -1265,6 +1293,85 @@ mod tests {
         assert_eq!(tool_label("exec_command"), "Exec");
         assert_eq!(tool_label("update_plan"), "Plan");
         assert!(tool_label("exec_command").len() <= 6);
+    }
+
+    fn test_session(agent_cli: &'static str, pid: u32, session_id: &str) -> AgentSession {
+        AgentSession {
+            agent_cli,
+            pid,
+            session_id: session_id.into(),
+            cwd: "/tmp/project".into(),
+            project_name: "project".into(),
+            started_at: 0,
+            status: SessionStatus::Waiting,
+            model: "gpt-5".into(),
+            effort: String::new(),
+            context_percent: 58.7,
+            total_input_tokens: 1_000,
+            total_output_tokens: 500,
+            total_cache_read: 0,
+            total_cache_create: 0,
+            turn_count: 1,
+            current_tasks: vec!["waiting for input".into()],
+            mem_mb: 0,
+            version: String::new(),
+            git_branch: String::new(),
+            git_added: 0,
+            git_modified: 0,
+            token_history: Vec::new(),
+            context_history: Vec::new(),
+            compaction_count: 0,
+            context_window: 258_400,
+            subagents: Vec::new(),
+            mem_file_count: 0,
+            mem_line_count: 0,
+            children: Vec::new(),
+            initial_prompt: "prompt".into(),
+            first_assistant_text: String::new(),
+            chat_messages: Vec::new(),
+            tool_calls: Vec::new(),
+            pending_since_ms: 0,
+            thinking_since_ms: 0,
+            file_accesses: Vec::new(),
+            config_root: String::new(),
+        }
+    }
+
+    #[test]
+    fn sessions_table_shows_autokill_column() {
+        let mut app = App::new_with_config(Theme::default(), &[], PanelVisibility::default());
+        app.sessions.push(test_session("claude", 51, "claude-on"));
+        app.sessions.push(test_session("claude", 52, "claude-off"));
+        app.selected = 1;
+        app.toggle_selected_autokill();
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                draw_sessions_panel(
+                    f,
+                    &app,
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        width: 120,
+                        height: 20,
+                    },
+                    &app.theme,
+                )
+            })
+            .unwrap();
+        let text = format!("{}", terminal.backend());
+
+        assert!(
+            text.contains("Auto"),
+            "autokill header should render\n{text}"
+        );
+        assert!(
+            text.contains("off"),
+            "disabled autokill cell should render\n{text}"
+        );
     }
 
     #[test]

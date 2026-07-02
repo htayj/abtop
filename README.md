@@ -14,7 +14,7 @@ Claude Code, Codex CLI, and OpenCode sessions are discovered from local process/
 - Agent spawned a server and forgot to kill it? Orphan port detection.
 - Context window filling up? Per-session % bars with warnings.
 
-All read-only. No API keys. No auth.
+All local. No API keys. No auth. In this personal fork, the interactive tmux scheduler can send tmux keys and kill Claude Code PIDs when per-session autokill is enabled; after reset it may cause Claude Code to resume and make its normal API calls.
 
 ## Install
 
@@ -68,6 +68,8 @@ tmux new -s work
 # → Enter on a session in abtop jumps to its pane
 ```
 
+This personal fork also runs a Claude Code 5h-limit scheduler only during interactive TUI ticks. When fresh Claude 5h usage reaches 100% with a future reset time, it interrupts only working Claude sessions whose `autokill` column is `on` (default for Claude sessions), sends `reset`, starts `claude --resume <session-id>` in the pane without sending a prompt, and later sends `continue` only to those interrupted panes after the reset time. Toggle the selected session with `a`; opt-outs are in-memory and reset when abtop restarts.
+
 ## Supported Agents
 
 | Feature           | Claude Code | Codex CLI | OpenCode |
@@ -82,6 +84,7 @@ tmux new -s work
 | Children / Ports  |     ✅      |    ✅     |    ✅    |
 | Subagents         |     ✅      |    ❌     |    ❌    |
 | Memory Status     |     ✅      |    ❌     |    ❌    |
+| 5h Autokill       |     ✅      |    ❌     |    ❌    |
 
 OpenCode support reads the local SQLite database at `~/.local/share/opencode/opencode.db` and requires `sqlite3` in `PATH`.
 
@@ -198,6 +201,7 @@ When `language` is unset, abtop auto-detects from `LANG` — any value starting 
 | `Enter`            | Jump to session terminal (tmux only) |
 | `x`                | Kill selected session                |
 | `X`                | Kill all orphan ports                |
+| `a`                | Toggle selected Claude autokill      |
 | `t`                | Cycle theme and save the selection   |
 | `1`–`7`            | Toggle panel visibility              |
 | `c`                | Open/close config page               |
@@ -238,7 +242,7 @@ is a reference consumer: a local-first web dashboard built on exactly this API.
 
 ## Privacy
 
-abtop reads local files and local process/open-file metadata only. No API keys, no auth. In the TUI and `--once` output, tool names and file paths are shown, but file contents and prompt text are never displayed. Session summaries are generated via `claude --print`, which makes its own API call — this is the only indirect network usage.
+abtop reads local files and local process/open-file metadata. No API keys, no auth. In this personal fork, the interactive TUI scheduler can also kill Claude Code PIDs and send tmux keys (`reset`, `claude --resume <session-id>`, and `continue`) for sessions with autokill enabled. The later `continue` may cause Claude Code to resume work and make its normal API calls/use quota after reset. In the TUI and `--once` output, tool names and file paths are shown, but file contents and prompt text are never displayed. Session summaries are generated via `claude --print`, which can make its own API call.
 
 The JSON snapshot includes richer local dashboard data, including `summary`, `chat_messages`, working directories, config roots, tool-call previews, child process commands, token counts, and port metadata. Chat text is bounded and redacted by the collectors, but it is still derived from local transcripts and may contain sensitive project context. Treat JSON snapshots as local/private data and avoid writing them to shared logs or exposing them on a network without your own access controls.
 

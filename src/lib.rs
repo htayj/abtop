@@ -58,6 +58,7 @@ pub mod demo;
 pub mod host_info;
 pub mod locale;
 pub mod model;
+pub mod scheduler;
 pub mod setup;
 pub mod snapshot;
 pub mod theme;
@@ -232,7 +233,7 @@ fn run_app(
     if demo_mode {
         demo::populate_demo(&mut app);
     } else {
-        app.tick();
+        app.tick_interactive();
     }
 
     let mut last_tick = std::time::Instant::now();
@@ -283,7 +284,7 @@ fn run_app(
                     } else {
                         match key.code {
                             KeyCode::Char('q') => app.quit(),
-                            KeyCode::Char('r') if !demo_mode => app.tick(),
+                            KeyCode::Char('r') if !demo_mode => app.tick_interactive(),
                             KeyCode::Down | KeyCode::Char('j') => app.select_next(),
                             KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
                             KeyCode::Right | KeyCode::Tab => app.select_next_narrow_tab(),
@@ -297,6 +298,7 @@ fn run_app(
                             KeyCode::Char('-') => app.restore_narrow_sections(),
                             KeyCode::Char('x') if !demo_mode => app.kill_selected(),
                             KeyCode::Char('X') if !demo_mode => app.kill_orphan_ports(),
+                            KeyCode::Char('a') => app.toggle_selected_autokill(),
                             KeyCode::Char('t') => app.cycle_theme(),
                             KeyCode::Char('T') => app.tree_view = !app.tree_view,
                             KeyCode::Char('l') | KeyCode::Char('L') => app.toggle_timeline(),
@@ -336,7 +338,7 @@ fn run_app(
             }
         } else if !had_input && last_tick.elapsed() >= tick_interval {
             // Data tick every 2s — skip when handling input to avoid lag
-            app.tick();
+            app.tick_interactive();
             last_tick = std::time::Instant::now();
         }
 
